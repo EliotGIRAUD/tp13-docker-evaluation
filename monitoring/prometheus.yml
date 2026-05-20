@@ -1,0 +1,30 @@
+global:
+  scrape_interval: 15s
+  scrape_timeout: 10s
+  evaluation_interval: 15s
+
+scrape_configs:
+  # Prometheus se scrap lui-même (utile pour vérifier que tout tourne)
+  - job_name: "prometheus"
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  # Les deux instances de l'API exposent /metrics grâce à prom-client
+  - job_name: "mon-api"
+    metrics_path: /metrics
+    static_configs:
+      - targets:
+          - "cat:3000"
+          - "dog:3000"
+        labels:
+          stack: "tp13"
+
+  # Métriques de l'hôte (CPU, RAM, disque, réseau...)
+  - job_name: "node-exporter"
+    static_configs:
+      - targets: ["node-exporter:9100"]
+
+  # Métriques par conteneur Docker
+  - job_name: "cadvisor"
+    static_configs:
+      - targets: ["cadvisor:8080"]

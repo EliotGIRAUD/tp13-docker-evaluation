@@ -1,0 +1,18 @@
+{
+  "name": "mon-api",
+  "version": "1.0.0",
+  "description": "API Node.js Express pour le TP13 Docker - expose un compteur Prometheus, /healthz et le hostname du conteneur",
+  "main": "app.js",
+  "scripts": {
+    "start": "node app.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "prom-client": "^15.1.3"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "author": "Eliot",
+  "license": "MIT"
+}

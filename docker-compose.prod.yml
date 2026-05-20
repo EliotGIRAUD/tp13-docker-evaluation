@@ -1,0 +1,77 @@
+# Override de production : ajoute des limites de ressources (CPU + RAM)
+# sur chaque service via "deploy.resources" (compatible Docker Compose v2 standalone).
+#
+# Utilisation :
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+
+services:
+  cat:
+    deploy:
+      resources:
+        limits:
+          cpus: "0.50"
+          memory: "256M"
+        reservations:
+          cpus: "0.10"
+          memory: "64M"
+
+  dog:
+    deploy:
+      resources:
+        limits:
+          cpus: "0.50"
+          memory: "256M"
+        reservations:
+          cpus: "0.10"
+          memory: "64M"
+
+  nginx:
+    deploy:
+      resources:
+        limits:
+          cpus: "0.30"
+          memory: "128M"
+        reservations:
+          cpus: "0.05"
+          memory: "32M"
+
+  prometheus:
+    deploy:
+      resources:
+        limits:
+          cpus: "0.50"
+          memory: "512M"
+        reservations:
+          cpus: "0.10"
+          memory: "128M"
+
+  grafana:
+    deploy:
+      resources:
+        limits:
+          cpus: "0.50"
+          memory: "512M"
+        reservations:
+          cpus: "0.10"
+          memory: "128M"
+
+  node-exporter:
+    deploy:
+      resources:
+        limits:
+          cpus: "0.20"
+          memory: "128M"
+
+  cadvisor:
+    deploy:
+      resources:
+        limits:
+          cpus: "0.30"
+          memory: "256M"
+
+  portainer:
+    deploy:
+      resources:
+        limits:
+          cpus: "0.30"
+          memory: "256M"

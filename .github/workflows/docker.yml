@@ -1,0 +1,78 @@
+name: Build, scan & push API image
+
+# Déclenchement : sur chaque push sur main
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write   # nécessaire pour pousser sur ghcr.io
+
+env:
+  IMAGE_NAME: mon-api
+  REGISTRY: ghcr.io
+
+jobs:
+  build-scan-push:
+    name: Build, scan Trivy et push GHCR
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout du dépôt
+        uses: actions/checkout@v4
+
+      - name: Configurer Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Calculer le tag (sha court)
+        id: meta
+        run: |
+          SHORT_SHA=$(git rev-parse --short HEAD)
+          IMAGE_REF_BASE="${REGISTRY}/${{ github.repository_owner }}/${IMAGE_NAME}"
+          IMAGE_REF_BASE=$(echo "$IMAGE_REF_BASE" | tr '[:upper:]' '[:lower:]')
+          echo "image_ref=${IMAGE_REF_BASE}:git-${SHORT_SHA}" >> "$GITHUB_OUTPUT"
+          echo "image_latest=${IMAGE_REF_BASE}:latest" >> "$GITHUB_OUTPUT"
+          echo "short_sha=${SHORT_SHA}" >> "$GITHUB_OUTPUT"
+
+      - name: Build de l'image (chargée localement pour le scan)
+        uses: docker/build-push-action@v6
+        with:
+          context: ./api
+          file: ./api/Dockerfile
+          load: true
+          push: false
+          tags: |
+            ${{ steps.meta.outputs.image_ref }}
+            ${{ steps.meta.outputs.image_latest }}
+
+      - name: Scan Trivy - échec si CVE CRITICAL
+        uses: aquasecurity/trivy-action@0.24.0
+        with:
+          image-ref: ${{ steps.meta.outputs.image_ref }}
+          format: table
+          exit-code: "1"
+          ignore-unfixed: true
+          vuln-type: "os,library"
+          severity: "CRITICAL"
+
+      - name: Connexion à ghcr.io
+        if: success()
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push de l'image vers ghcr.io
+        if: success()
+        uses: docker/build-push-action@v6
+        with:
+          context: ./api
+          file: ./api/Dockerfile
+          push: true
+          tags: |
+            ${{ steps.meta.outputs.image_ref }}
+            ${{ steps.meta.outputs.image_latest }}
