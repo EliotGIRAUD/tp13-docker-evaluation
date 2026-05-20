@@ -4,8 +4,10 @@ global:
   evaluation_interval: 15s
 
 scrape_configs:
-  # Prometheus se scrap lui-même (utile pour vérifier que tout tourne)
+  # Prometheus se scrap lui-même.
+  # Comme on tourne avec --web.route-prefix=/prometheus, les métriques sont sur /prometheus/metrics
   - job_name: "prometheus"
+    metrics_path: /prometheus/metrics
     static_configs:
       - targets: ["localhost:9090"]
 

@@ -237,14 +237,30 @@ trivy image 185.98.137.102:5000/mon-api:1.0.0 \
 
 ![Trivy](captures/05-trivy-scan.png)
 
+**Résultat de notre scan sur `mon-api:1.0.0` (HIGH + CRITICAL, fixables uniquement) :**
+
+```text
+Report Summary
+mon-api:1.0.0 (alpine 3.23.4)  →  0 vulnerabilités OS
+opt/yarn-v1.22.22              →  0
+usr/local/.../npm subdeps      →  11 HIGH (cross-spawn, glob, minimatch, tar)
+
+Total: 11 (HIGH: 11, CRITICAL: 0)
+```
+
 **Justification du choix `node:20-alpine` plutôt que `node:latest` :**
 
 | Image | Taille | Distribution | CVE typiques (HIGH+CRITICAL) |
 |---|---|---|---|
-| `node:latest` | ~1.1 Go | Debian (bookworm) | Plusieurs dizaines (souvent > 50) |
-| `node:20-alpine` | ~140 Mo | Alpine Linux + musl libc | Très peu (souvent 0-2) |
+| `node:latest` | ~1.1 Go | Debian (bookworm) — glibc, openssl, perl, bash, coreutils… | Plusieurs dizaines (50+) |
+| `node:20-alpine` | ~140 Mo | Alpine Linux 3.23 + musl libc + busybox | **0 sur l'OS** dans notre scan |
 
-`node:20-alpine` est beaucoup plus léger (musl libc, busybox au lieu de coreutils) et n'embarque que les paquets strictement nécessaires. La surface d'attaque et donc le nombre de CVE sont nettement plus faibles. C'est aussi plus rapide à pull/déployer.
+Points clés à retenir :
+
+- **0 CVE sur l'OS Alpine 3.23.4** dans notre image : c'est la vraie victoire d'`alpine`. Avec `node:latest` (Debian), Trivy remonterait des CVE openssl, glibc, perl, bash, etc., même sans avoir installé quoi que ce soit.
+- Les **11 CVE HIGH restantes** sont toutes dans des dépendances transitives de `npm` lui-même (`cross-spawn`, `glob`, `minimatch`, `tar`) qui sont embarquées avec Node mais **ne sont pas utilisées au runtime** par notre app. Elles ne sont pas exposées à du contenu utilisateur ni au réseau.
+- **0 CVE CRITICAL** → la pipeline CI (Partie 9) passe avec `exit-code: 1` sur `severity: CRITICAL`.
+- Image quasi 8× plus petite → builds CI plus rapides, pulls VPS plus rapides, surface d'attaque drastiquement réduite.
 
 ### Dockerfile : cache et `.dockerignore`
 
@@ -450,10 +466,12 @@ Aucun secret supplémentaire n'est nécessaire : on utilise `GITHUB_TOKEN` (four
 | API (load-balancée) | http://vps120699.serveur-vps.net/ |
 | API cat | http://vps120699.serveur-vps.net/cat |
 | API dog | http://vps120699.serveur-vps.net/dog |
+| Grafana | http://vps120699.serveur-vps.net/grafana/ |
+| Prometheus | http://vps120699.serveur-vps.net/prometheus/ |
+| Portainer | http://vps120699.serveur-vps.net/portainer/ |
 | Registry UI | http://vps120699.serveur-vps.net:8080/ |
-| Prometheus | http://vps120699.serveur-vps.net:9090/ |
-| Grafana | http://vps120699.serveur-vps.net:3001/ |
-| Portainer | http://vps120699.serveur-vps.net:9000/ |
+
+> 📝 **Choix d'architecture — tout passe par Nginx** : l'hébergeur OVH du VPS filtre un grand nombre de ports HTTP non standards au niveau de son réseau (5000, 9000, 9090, 8082, 8084, 12011…). Plutôt que de chercher un port libre pour chaque service, on expose tout via le **reverse proxy Nginx** déjà déployé (port 80). Avantage : une seule URL/IP à publier, et le routage propre est géré par Nginx (`/grafana/` → service Grafana, `/prometheus/` → service Prometheus, etc.). Les services backend ne sont **jamais exposés directement sur l'hôte** — ils écoutent uniquement sur le réseau Docker interne `app_net`.
 
 ### Procédure de déploiement
 

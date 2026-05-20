@@ -4,7 +4,9 @@ datasources:
   - name: Prometheus
     type: prometheus
     access: proxy
-    url: http://prometheus:9090
+    # NB : on inclut /prometheus parce que le serveur tourne avec
+    # --web.route-prefix=/prometheus (pour être servi sous /prometheus/ via Nginx).
+    url: http://prometheus:9090/prometheus
     isDefault: true
     editable: false
     jsonData:
