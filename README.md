@@ -1,10 +1,22 @@
 # TP13 — Évaluation Docker
 
-> **Auteur :** Eliot
+> **Auteur :** Eliot Giraud
 > **Cours :** Docker — M1 MDS
+> **Dépôt GitHub :** [EliotGIRAUD/tp13-docker-evaluation](https://github.com/EliotGIRAUD/tp13-docker-evaluation)
 > **VPS de déploiement :** [vps120699.serveur-vps.net](http://vps120699.serveur-vps.net) (`185.98.137.102`)
+> **Image publiée :** `ghcr.io/eliotgiraud/mon-api:latest` (via la CI GitHub Actions)
 
 Ce dépôt contient l'intégralité de l'évaluation Docker : une API Node.js conteneurisée, sa stack `docker compose` complète (load-balancer Nginx, deux instances de l'API, registry privé, observabilité Prometheus / Grafana / cAdvisor / node-exporter, Portainer) et un pipeline CI/CD GitHub Actions.
+
+| Service | URL publique |
+|---|---|
+| API (load-balancée) | http://185.98.137.102/ |
+| API cat | http://185.98.137.102/cat |
+| API dog | http://185.98.137.102/dog |
+| Grafana | http://185.98.137.102/grafana/ (admin / admin74) |
+| Prometheus | http://185.98.137.102/prometheus/ |
+| Portainer | http://185.98.137.102:8083/ |
+| Registry UI | http://185.98.137.102:8080/ |
 
 ## Sommaire
 
@@ -36,7 +48,8 @@ tp13/
 │   ├── Dockerfile
 │   └── .dockerignore
 ├── nginx/
-│   └── default.conf               # Upstreams round-robin + locations /cat et /dog
+│   ├── nginx.conf                 # Conf globale (worker_processes=1 pour RR déterministe)
+│   └── default.conf               # Upstreams round-robin + locations /cat /dog /grafana /prometheus /portainer
 ├── monitoring/
 │   ├── prometheus.yml             # Scrap config (cat, dog, node-exporter, cAdvisor, prom)
 │   └── grafana/
@@ -180,25 +193,31 @@ depends_on:
 
 ### Configuration Nginx
 
-[`nginx/default.conf`](nginx/default.conf) définit **trois upstreams** :
+[`nginx/default.conf`](nginx/default.conf) définit des upstreams dédiés et délègue le routage :
 
 ```nginx
 upstream api_pool {       # round-robin pour GET /
     server cat:3000;
     server dog:3000;
 }
-upstream cat_only { server cat:3000; }
-upstream dog_only { server dog:3000; }
+upstream cat_only      { server cat:3000;        }
+upstream dog_only      { server dog:3000;        }
+upstream grafana_up    { server grafana:3000;    }
+upstream prometheus_up { server prometheus:9090; }
 
 server {
     listen 80;
-    location = /     { proxy_pass http://api_pool/; }
-    location = /cat  { proxy_pass http://cat_only/; }
-    location = /dog  { proxy_pass http://dog_only/; }
+    location = /cat       { proxy_pass http://cat_only/;   }
+    location = /dog       { proxy_pass http://dog_only/;   }
+    location /grafana/    { proxy_pass http://grafana_up;    }   # WebSocket headers en plus
+    location /prometheus/ { proxy_pass http://prometheus_up; }
+    location /            { proxy_pass http://api_pool;      }   # round-robin par défaut
 }
 ```
 
 L'algorithme **round-robin** est l'algorithme par défaut de Nginx → chaque requête sur `/` est servie alternativement par `cat` puis `dog`.
+
+> 💡 **Détail important** : [`nginx/nginx.conf`](nginx/nginx.conf) force `worker_processes 1;`. Avec plusieurs workers Nginx, chacun maintient son **propre** état d'upstream et démarre par le premier serveur (cat) — ce qui peut casser l'alternance attendue lors d'un test rapide. Un worker unique garantit un round-robin déterministe.
 
 ---
 
@@ -214,14 +233,13 @@ API_IMAGE_NAME=mon-api
 API_IMAGE_TAG=1.0.0
 REGISTRY_HOST=185.98.137.102
 REGISTRY_PORT=5000
+REGISTRY_UI_PORT=8080
 CAT_PET=cat
 DOG_PET=dog
 NGINX_PORT=80
-PROMETHEUS_PORT=9090
-GRAFANA_PORT=3001
-PORTAINER_PORT=9000
+PORTAINER_PORT=8083
 GRAFANA_ADMIN_USER=admin
-GRAFANA_ADMIN_PASSWORD=admin
+GRAFANA_ADMIN_PASSWORD=admin74
 ```
 
 Aucune valeur n'apparaît en dur dans `docker-compose.yml` (hors valeurs par défaut techniques comme le port 3000 interne du conteneur).
@@ -364,13 +382,13 @@ En production, voici les éléments à sauvegarder et leur criticité :
 
 La stack [`docker-compose.yml`](docker-compose.yml) inclut un **stack d'observabilité complète** :
 
-| Service | Image | Rôle | Port |
+| Service | Image | Rôle | Accès public |
 |---|---|---|---|
-| `prometheus` | `prom/prometheus:v2.55.1` | Scrape les métriques | 9090 |
-| `node-exporter` | `prom/node-exporter:v1.8.2` | Métriques système (hôte) | interne |
-| `cadvisor` | `gcr.io/cadvisor/cadvisor:v0.49.1` | Métriques par conteneur | interne |
-| `grafana` | `grafana/grafana:11.2.2` | Dashboards | 3001 |
-| `portainer` | `portainer/portainer-ce:2.21.4` | Gestion graphique des conteneurs | 9000 |
+| `prometheus` | `prom/prometheus:v2.55.1` | Scrape les métriques (`cat`, `dog`, `cadvisor`, `node-exporter`, lui-même) | via Nginx → `/prometheus/` |
+| `node-exporter` | `prom/node-exporter:v1.8.2` | Métriques système (hôte) | interne uniquement |
+| `cadvisor` | `gcr.io/cadvisor/cadvisor:v0.49.1` | Métriques par conteneur Docker | interne uniquement |
+| `grafana` | `grafana/grafana:11.2.2` | Dashboards | via Nginx → `/grafana/` |
+| `portainer` | `portainer/portainer-ce:2.21.4` | Gestion graphique des conteneurs | port 8083 direct |
 
 ### Provisioning Grafana
 
@@ -382,10 +400,16 @@ Tout est **provisionné automatiquement** au démarrage :
 Le dashboard contient :
 
 - Requêtes/sec (total et par service)
+- Total des requêtes par service (compteur depuis le démarrage)
+- Requêtes par seconde — cat vs dog (séries temporelles)
 - CPU + RAM par conteneur (cAdvisor)
 - CPU + RAM hôte (node-exporter)
 
 ![Grafana](captures/11-grafana-dashboard.png)
+
+Et les cibles scrapées par Prometheus, toutes en `UP` :
+
+![Prometheus targets](captures/13-prometheus.png)
 
 ### Limites CPU/RAM en production
 
@@ -466,9 +490,9 @@ Aucun secret supplémentaire n'est nécessaire : on utilise `GITHUB_TOKEN` (four
 | API (load-balancée) | http://vps120699.serveur-vps.net/ |
 | API cat | http://vps120699.serveur-vps.net/cat |
 | API dog | http://vps120699.serveur-vps.net/dog |
-| Grafana | http://vps120699.serveur-vps.net/grafana/ |
+| Grafana | http://vps120699.serveur-vps.net/grafana/ — `admin` / `admin74` |
 | Prometheus | http://vps120699.serveur-vps.net/prometheus/ |
-| Portainer | http://vps120699.serveur-vps.net/portainer/ |
+| Portainer | http://vps120699.serveur-vps.net:8083/ |
 | Registry UI | http://vps120699.serveur-vps.net:8080/ |
 
 > 📝 **Choix d'architecture — tout passe par Nginx** : l'hébergeur OVH du VPS filtre un grand nombre de ports HTTP non standards au niveau de son réseau (5000, 9000, 9090, 8082, 8084, 12011…). Plutôt que de chercher un port libre pour chaque service, on expose tout via le **reverse proxy Nginx** déjà déployé (port 80). Avantage : une seule URL/IP à publier, et le routage propre est géré par Nginx (`/grafana/` → service Grafana, `/prometheus/` → service Prometheus, etc.). Les services backend ne sont **jamais exposés directement sur l'hôte** — ils écoutent uniquement sur le réseau Docker interne `app_net`.
